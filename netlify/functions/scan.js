@@ -1,8 +1,7 @@
 // موجه البرامج الذكي — Netlify Function
-// Proxy آمن لاستدعاء Anthropic API لقراءة شهادات الثانوية العُمانية
+const https = require('https');
 
 exports.handler = async function(event, context) {
-  // CORS headers
   const headers = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type",
@@ -10,7 +9,6 @@ exports.handler = async function(event, context) {
     "Content-Type": "application/json"
   };
 
-  // Handle preflight
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 200, headers, body: "" };
   }
@@ -19,8 +17,13 @@ exports.handler = async function(event, context) {
     return { statusCode: 405, headers, body: JSON.stringify({ error: "Method not allowed" }) };
   }
 
-  // API key from Netlify environment variables
   const apiKey = process.env.ANTHROPIC_API_KEY;
+  
+  // Debug: log what we see
+  console.log("API Key present:", !!apiKey);
+  console.log("API Key length:", apiKey ? apiKey.length : 0);
+  console.log("API Key prefix:", apiKey ? apiKey.substring(0, 15) : "NONE");
+
   if (!apiKey) {
     return {
       statusCode: 500, headers,
@@ -40,28 +43,26 @@ exports.handler = async function(event, context) {
     return { statusCode: 400, headers, body: JSON.stringify({ error: "بيانات الصورة مفقودة" }) };
   }
 
-  // Validate image size (max ~4MB base64)
-  if (image.length > 6_000_000) {
+  if (image.length > 6000000) {
     return {
       statusCode: 413, headers,
-      body: JSON.stringify({ error: "الصورة كبيرة جداً — يرجى استخدام صورة أصغر (أقل من 4MB)" })
+      body: JSON.stringify({ error: "الصورة كبيرة جداً — يرجى استخدام صورة أصغر" })
     };
   }
 
-  const prompt = `أنت متخصص في قراءة شهادات الثانوية العامة العُمانية (دبلوم التعليم العام).
-
-استخرج من هذه الشهادة بدقة:
+  const prompt = `أنت متخصص في قراءة شهادات الثانوية العامة العُمانية.
+استخرج من هذه الشهادة:
 1. اسم الطالب/الطالبة الكامل
 2. الجنس (ذكر أو أنثى)
-3. درجات كل مادة: درجة الفصل الأول ودرجة الفصل الثاني بشكل منفصل
+3. درجات كل مادة: درجة الفصل الأول ودرجة الفصل الثاني
 
-أكواد المواد الممكنة:
+أكواد المواد:
 تربية_اسلامية | عربي | انجليزي | دراسات_اجتماعية
 رياضيات_متقدمة | رياضيات_اساسية | فيزياء | كيمياء | احياء
 تقنية_معلومات | جغرافيا | تاريخ | علوم_تقانة
 انجليزي_متقدم | فنون_تشكيلية | موسيقى | رياضة | ادارة_اعمال | فرنسي
 
-أعد JSON فقط بلا أي نص آخر:
+أعد JSON فقط:
 {
   "name": "الاسم الكامل",
   "gender": "ذكر أو أنثى",
@@ -74,58 +75,69 @@ exports.handler = async function(event, context) {
   "confidence": "high أو medium أو low"
 }`;
 
-  try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
+  const requestBody = JSON.stringify({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 1500,
+    messages: [{
+      role: "user",
+      content: [
+        { type: "image", source: { type: "base64", media_type: mediaType, data: image } },
+        { type: "text", text: prompt }
+      ]
+    }]
+  });
+
+  return new Promise((resolve) => {
+    const options = {
+      hostname: 'api.anthropic.com',
+      path: '/v1/messages',
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 1500,
-        messages: [{
-          role: "user",
-          content: [
-            { type: "image", source: { type: "base64", media_type: mediaType, data: image } },
-            { type: "text", text: prompt }
-          ]
-        }]
-      })
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'Content-Length': Buffer.byteLength(requestBody)
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        console.log("Anthropic status:", res.statusCode);
+        if (res.statusCode !== 200) {
+          console.error("Anthropic error:", data);
+          resolve({
+            statusCode: 502, headers,
+            body: JSON.stringify({ error: "خطأ في الاتصال: " + res.statusCode })
+          });
+          return;
+        }
+        try {
+          const parsed = JSON.parse(data);
+          const text = (parsed.content || [])
+            .filter(b => b.type === "text")
+            .map(b => b.text)
+            .join("");
+          const match = text.match(/\{[\s\S]*\}/);
+          if (!match) {
+            resolve({ statusCode: 422, headers, body: JSON.stringify({ error: "لم أتمكن من قراءة الشهادة" }) });
+            return;
+          }
+          const result = JSON.parse(match[0]);
+          resolve({ statusCode: 200, headers, body: JSON.stringify(result) });
+        } catch (e) {
+          resolve({ statusCode: 500, headers, body: JSON.stringify({ error: "خطأ في المعالجة: " + e.message }) });
+        }
+      });
     });
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("Anthropic API error:", errText);
-      return {
-        statusCode: 502, headers,
-        body: JSON.stringify({ error: "خطأ في الاتصال بخدمة الذكاء الاصطناعي" })
-      };
-    }
+    req.on('error', (e) => {
+      console.error("Request error:", e);
+      resolve({ statusCode: 500, headers, body: JSON.stringify({ error: "خطأ في الشبكة: " + e.message }) });
+    });
 
-    const data = await response.json();
-    const text = (data.content || [])
-      .filter(b => b.type === "text")
-      .map(b => b.text)
-      .join("");
-
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) {
-      return {
-        statusCode: 422, headers,
-        body: JSON.stringify({ error: "لم أتمكن من قراءة الشهادة — تأكد من وضوح الصورة" })
-      };
-    }
-
-    const parsed = JSON.parse(match[0]);
-    return { statusCode: 200, headers, body: JSON.stringify(parsed) };
-
-  } catch (err) {
-    console.error("Function error:", err);
-    return {
-      statusCode: 500, headers,
-      body: JSON.stringify({ error: "خطأ داخلي: " + err.message })
-    };
-  }
+    req.write(requestBody);
+    req.end();
+  });
 };
