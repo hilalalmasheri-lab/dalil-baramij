@@ -874,13 +874,39 @@ function processFile(file){
     alert('يرجى اختيار صورة (JPG أو PNG)'); return;
   }
   S.scanning=true; S.err=""; S.step="scanning"; render();
-  var reader=new FileReader();
-  reader.onload=function(e){
-    var b64=e.target.result.split(',')[1];
-    var mtype=file.type||'image/jpeg';
-    callVisionAPI(b64, mtype);
+
+  // ضغط الصورة قبل الإرسال لتقليل الحجم
+  var img = new Image();
+  var objectUrl = URL.createObjectURL(file);
+  img.onload = function(){
+    URL.revokeObjectURL(objectUrl);
+    var canvas = document.createElement('canvas');
+    var maxW = 1600, maxH = 1600;
+    var w = img.width, h = img.height;
+    if(w > maxW || h > maxH){
+      var ratio = Math.min(maxW/w, maxH/h);
+      w = Math.round(w*ratio);
+      h = Math.round(h*ratio);
+    }
+    canvas.width = w; canvas.height = h;
+    var ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, w, h);
+    // ضغط بجودة 85%
+    var compressed = canvas.toDataURL('image/jpeg', 0.85);
+    var b64 = compressed.split(',')[1];
+    console.log('Image compressed:', Math.round(b64.length/1024)+'KB');
+    callVisionAPI(b64, 'image/jpeg');
   };
-  reader.readAsDataURL(file);
+  img.onerror = function(){
+    // إذا فشل الضغط، أرسل الصورة الأصلية
+    var reader = new FileReader();
+    reader.onload = function(e){
+      var b64 = e.target.result.split(',')[1];
+      callVisionAPI(b64, file.type||'image/jpeg');
+    };
+    reader.readAsDataURL(file);
+  };
+  img.src = objectUrl;
 }
 
 async function callVisionAPI(b64, mtype){
