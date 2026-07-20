@@ -932,29 +932,72 @@ async function callVisionAPI(b64, mtype){
 function confirmScan(){
   var d=S.scanData;
   if(!d) return;
-  // Apply scanned data to state
-  if(d.name) S.name=d.name;
-  if(d.gender) S.gender=d.gender;
-  // Apply grades
-  var g=d.grades||{};
+
+  // بيانات الطالب
+  if(d.name)   S.name   = d.name;
+  if(d.gender) S.gender = d.gender;
+
+  // تعريف المواد الإجبارية والرياضيات
+  var MANDATORY_KEYS = ["تربية_اسلامية","عربي","انجليزي","دراسات_اجتماعية"];
+  var MATH_KEYS      = ["رياضيات_متقدمة","رياضيات_اساسية"];
+  var ALL_ELEC_KEYS  = ELECTIVES.map(function(e){return e.k;});
+
+  // تطبيق الدرجات
+  var g = d.grades || {};
+  var detectedMath     = null;
+  var detectedElectives = [];
+
   Object.keys(g).forEach(function(k){
-    var v=g[k];
-    if(v && typeof v==="object"){
-      var v1=Number(v.f1||0), v2=Number(v.f2||0);
-      if(v1>0){ S.g1[k]=v1; }
-      if(v2>0){ S.g2[k]=v2; }
-      if(v1>0&&v2>0) S.g[k]=+((v1+v2)/2).toFixed(2);
-      else if(v1>0) S.g[k]=v1;
-      else if(v2>0) S.g[k]=v2;
+    var v = g[k];
+    if(!v || typeof v !== "object") return;
+    var v1 = Number(v.f1||0), v2 = Number(v.f2||0);
+    if(v1<=0 && v2<=0) return;
+
+    // حفظ الدرجات
+    if(v1>0) S.g1[k] = v1;
+    if(v2>0) S.g2[k] = v2;
+    if(v1>0&&v2>0) S.g[k] = +((v1+v2)/2).toFixed(2);
+    else if(v1>0)  S.g[k] = v1;
+    else           S.g[k] = v2;
+
+    // كشف نوع الرياضيات
+    if(MATH_KEYS.indexOf(k) >= 0) detectedMath = k;
+
+    // كشف المواد الاختيارية
+    if(MANDATORY_KEYS.indexOf(k) < 0 && MATH_KEYS.indexOf(k) < 0){
+      if(ALL_ELEC_KEYS.indexOf(k) >= 0){
+        detectedElectives.push(k);
+      }
     }
   });
-  // Apply math type
-  if(d.math_type) S.mathType=d.math_type;
-  // Apply electives
-  if(d.electives&&d.electives.length) S.selE=d.electives.slice(0,3);
-  // Recalc avg
-  S.avg=calcAvg(S.g, S.mathType, S.selE);
-  S.scanData=null; S.step="form"; render();
+
+  // تعيين نوع الرياضيات
+  if(d.math_type && MATH_KEYS.indexOf(d.math_type) >= 0){
+    S.mathType = d.math_type;
+  } else if(detectedMath){
+    S.mathType = detectedMath;
+  }
+
+  // تعيين المواد الاختيارية — من الصورة أو من الكشف التلقائي
+  var electives = [];
+  if(d.electives && d.electives.length > 0){
+    electives = d.electives.filter(function(k){
+      return ALL_ELEC_KEYS.indexOf(k) >= 0;
+    }).slice(0,3);
+  }
+  // إذا لم يُعطِ النموذج اختياريات كافية، استكمل من الكشف التلقائي
+  if(electives.length < 3){
+    detectedElectives.forEach(function(k){
+      if(electives.indexOf(k) < 0 && electives.length < 3) electives.push(k);
+    });
+  }
+  S.selE = electives;
+
+  // إعادة حساب المعدل
+  S.avg = calcAvg(S.g, S.mathType, S.selE);
+  S.scanData = null;
+  S.step = "form";
+  render();
 }
 
 function rescan(){
