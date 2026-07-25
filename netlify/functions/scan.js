@@ -1,4 +1,5 @@
-// موجه البرامج الذكي — Netlify Function v3
+// موجه البرامج الذكي — Netlify Function v4
+// يدعم شهادة وزارة التعليم الجديدة 2026 (نسبة مباشرة بدون فصلين)
 const https = require('https');
 
 exports.handler = async function(event, context) {
@@ -25,55 +26,71 @@ exports.handler = async function(event, context) {
   const { image, mediaType } = body;
   if (!image) return { statusCode: 400, headers, body: JSON.stringify({ error: "الصورة مفقودة" }) };
 
-  // Log image size for debugging
   const imageSizeKB = Math.round(image.length * 0.75 / 1024);
-  console.log("Image size KB:", imageSizeKB);
-  console.log("Media type:", mediaType);
+  console.log("Image size KB:", imageSizeKB, "| Type:", mediaType);
 
-  // Allow up to 20MB base64 (15MB actual)
   if (image.length > 20000000) {
-    return { statusCode: 413, headers, body: JSON.stringify({ error: "الصورة كبيرة جداً — يرجى استخدام صورة أصغر" }) };
+    return { statusCode: 413, headers, body: JSON.stringify({ error: "الصورة كبيرة جداً — استخدم صورة أصغر" }) };
   }
 
-  const prompt = `أنت خبير في قراءة وثائق الثانوية العامة العُمانية.
+  const prompt = `أنت خبير في قراءة شهادات الثانوية العامة العُمانية الصادرة من وزارة التعليم عام 2026.
 
-استخرج من هذه الصورة/الجدول جميع البيانات التالية بدقة تامة:
+الشهادة الجديدة تُظهر لكل مادة: اسم المادة، التقدير (A/B/C/D)، والنسبة المئوية مباشرةً.
+لا يوجد فصل أول وفصل ثانٍ منفصلَين — فقط نسبة واحدة لكل مادة.
 
-جدول مطابقة أسماء المواد بأكوادها:
-التربية الإسلامية → تربية_اسلامية
-اللغة العربية → عربي
-اللغة الإنجليزية → انجليزي
+استخرج من هذه الشهادة:
+١. اسم الطالب/الطالبة الكامل
+٢. الجنس (ذكر أو أنثى) إن ظهر
+٣. النسبة المئوية لكل مادة
+
+جدول مطابقة أسماء المواد:
+التربية الإسلامية / الإسلامية → تربية_اسلامية
+اللغة العربية / العربية → عربي
+اللغة الإنجليزية / الإنجليزية / مهارات اللغة الإنجليزية → انجليزي
 الدراسات الاجتماعية / التربية الوطنية → دراسات_اجتماعية
 الرياضيات المتقدمة → رياضيات_متقدمة
-الرياضيات الأساسية → رياضيات_اساسية
+الرياضيات الأساسية / الرياضيات → رياضيات_اساسية
 الفيزياء → فيزياء
 الكيمياء → كيمياء
 الأحياء → احياء
-تقنية المعلومات → تقنية_معلومات
-الجغرافيا → جغرافيا
+تقنية المعلومات / الحاسب → تقنية_معلومات
+الجغرافيا الاقتصادية / الجغرافيا → جغرافيا
 التاريخ → تاريخ
 العلوم والتقانة → علوم_تقانة
+اللغة الإنجليزية المتقدمة → انجليزي_متقدم
 الفنون التشكيلية → فنون_تشكيلية
 المهارات الموسيقية → موسيقى
-الرياضة المدرسية → رياضة
+الرياضة المدرسية / التربية البدنية → رياضة
 إدارة الأعمال → ادارة_اعمال
 اللغة الفرنسية → فرنسي
 
-أعد JSON فقط:
+أعد JSON فقط بدون أي نص آخر:
 {
   "name": "الاسم الكامل أو null",
   "gender": "ذكر أو أنثى أو null",
   "grades": {
-    "كود_المادة": {"f1": رقم, "f2": رقم}
+    "كود_المادة": رقم_النسبة_المئوية
   },
   "math_type": "رياضيات_متقدمة أو رياضيات_اساسية أو null",
-  "electives": ["كود1","كود2","كود3"],
+  "electives": ["كود1", "كود2", "كود3"],
   "confidence": "high أو medium أو low"
+}
+
+مثال على grades:
+"grades": {
+  "تربية_اسلامية": 97,
+  "عربي": 91,
+  "انجليزي": 99,
+  "دراسات_اجتماعية": 94,
+  "رياضيات_متقدمة": 93,
+  "فيزياء": 94,
+  "كيمياء": 87,
+  "موسيقى": 96
 }`;
 
   const requestBody = JSON.stringify({
     model: "claude-haiku-4-5-20251001",
-    max_tokens: 2000,
+    max_tokens: 1500,
     messages: [{
       role: "user",
       content: [
@@ -104,19 +121,16 @@ exports.handler = async function(event, context) {
       res.on('data', chunk => { data += chunk; });
       res.on('end', () => {
         console.log("Anthropic status:", res.statusCode);
-        console.log("Response length:", data.length);
-
         if (res.statusCode !== 200) {
-          console.error("Anthropic error body:", data.substring(0, 500));
+          console.error("Anthropic error:", data.substring(0, 300));
           resolve({ statusCode: 502, headers,
-            body: JSON.stringify({ error: "خطأ من خدمة الذكاء الاصطناعي (" + res.statusCode + "): " + data.substring(0, 200) }) });
+            body: JSON.stringify({ error: "خطأ في خدمة الذكاء الاصطناعي (" + res.statusCode + ")" }) });
           return;
         }
-
         try {
           const parsed = JSON.parse(data);
           const text = (parsed.content || []).filter(b => b.type === "text").map(b => b.text).join("");
-          console.log("AI response preview:", text.substring(0, 300));
+          console.log("AI response preview:", text.substring(0, 200));
 
           const match = text.match(/\{[\s\S]*\}/);
           if (!match) {
@@ -126,35 +140,43 @@ exports.handler = async function(event, context) {
           }
 
           const result = JSON.parse(match[0]);
+
+          // Normalize grades — handle both formats
           if (result.grades) {
             Object.keys(result.grades).forEach(k => {
-              const g = result.grades[k];
-              if (!g || g.f1 == null || g.f2 == null) delete result.grades[k];
+              const v = result.grades[k];
+              if (typeof v === 'object' && v !== null) {
+                // Old format with f1/f2 — convert to single score
+                const v1 = Number(v.f1 || 0), v2 = Number(v.f2 || 0);
+                if (v1 > 0 && v2 > 0) result.grades[k] = +((v1+v2)/2).toFixed(2);
+                else if (v1 > 0) result.grades[k] = v1;
+                else if (v2 > 0) result.grades[k] = v2;
+                else delete result.grades[k];
+              } else {
+                const n = Number(v);
+                if (!n || n <= 0 || n > 100) delete result.grades[k];
+                else result.grades[k] = n;
+              }
             });
           }
 
-          console.log("Success — grades extracted:", Object.keys(result.grades || {}).length);
+          console.log("Extracted grades:", Object.keys(result.grades || {}).length, "subjects");
           resolve({ statusCode: 200, headers, body: JSON.stringify(result) });
 
         } catch(e) {
-          console.error("Parse error:", e.message, "Raw:", data.substring(0, 300));
-          resolve({ statusCode: 500, headers,
-            body: JSON.stringify({ error: "خطأ في المعالجة: " + e.message }) });
+          console.error("Parse error:", e.message);
+          resolve({ statusCode: 500, headers, body: JSON.stringify({ error: "خطأ في المعالجة: " + e.message }) });
         }
       });
     });
 
     req.on('timeout', () => {
-      console.error("Request timed out");
       req.destroy();
-      resolve({ statusCode: 504, headers,
-        body: JSON.stringify({ error: "انتهت مهلة الاتصال — حاول مجدداً" }) });
+      resolve({ statusCode: 504, headers, body: JSON.stringify({ error: "انتهت مهلة الاتصال — حاول مجدداً" }) });
     });
 
     req.on('error', e => {
-      console.error("Request error:", e.message);
-      resolve({ statusCode: 500, headers,
-        body: JSON.stringify({ error: "خطأ في الشبكة: " + e.message }) });
+      resolve({ statusCode: 500, headers, body: JSON.stringify({ error: "خطأ في الشبكة: " + e.message }) });
     });
 
     req.write(requestBody);
