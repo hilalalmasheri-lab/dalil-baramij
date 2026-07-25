@@ -1039,11 +1039,9 @@ function render(){
         "انجليزي_متقدم":"الإنجليزية المتقدمة","فرنسي":"اللغة الفرنسية"
       };
       var lbl=LABELS[k]||k;
-      return '<div class="scan-row">'
+      return '<div class="scan-row" style="grid-template-columns:1fr 80px">'
         +'<span class="scan-lbl">'+lbl+'</span>'
-        +'<div class="scan-val">'+v1+'</div>'
-        +'<div class="scan-val">'+v2+'</div>'
-        +'<div class="scan-avg">'+avg_v+'</div>'
+        +'<div class="scan-val">'+score+'</div>'
         +'</div>';
     }).join("");
     app.innerHTML=
