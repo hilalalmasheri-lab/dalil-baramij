@@ -511,8 +511,8 @@ function analyze(){
 
   S.step = "loading"; render();
 
-  /* defer computation to let loading screen paint */
-  requestAnimationFrame(()=>{
+  /* defer computation — double RAF ensures loading screen paints first */
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
     const fieldResults = [];
     for(const fk of S.selF){
       const fd    = FIELDS.find(f=>f.k===fk);
@@ -538,6 +538,17 @@ function analyze(){
     /* إزالة المجالات الفارغة بعد إزالة المكرر */
     const cleanedFields = fieldResults.filter(f=>f.progs.length>0);
     fieldResults.length=0; fieldResults.push(...cleanedFields);
+
+    /* ── حد أقصى 150 برنامج موزعة على المجالات بالتسلسل التنازلي ── */
+    let globalCap = 150;
+    for(const f of fieldResults){
+      if(globalCap <= 0){ f.progs = []; continue; }
+      if(f.progs.length > globalCap) f.progs = f.progs.slice(0, globalCap);
+      globalCap -= f.progs.length;
+    }
+    /* إزالة المجالات التي أصبحت فارغة بعد تطبيق الحد */
+    const cappedFields = fieldResults.filter(f=>f.progs.length>0);
+    fieldResults.length=0; fieldResults.push(...cappedFields);
 
     const noElig = S.selF.filter(k=>!fieldResults.find(f=>f.k===k));
     const total  = fieldResults.reduce((s,f)=>s+f.progs.length, 0);
