@@ -1,8 +1,7 @@
-
 // موجه البرامج الذكي — Netlify Function v4
 // يدعم شهادة وزارة التعليم الجديدة 2026 (نسبة مباشرة بدون فصلين)
 const https = require('https');
- 
+
 exports.handler = async function(event, context) {
   const headers = {
     "Access-Control-Allow-Origin": "*",
@@ -10,40 +9,40 @@ exports.handler = async function(event, context) {
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Content-Type": "application/json"
   };
- 
+
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers, body: "" };
   if (event.httpMethod !== "POST") return { statusCode: 405, headers, body: JSON.stringify({ error: "Method not allowed" }) };
- 
+
   const apiKey = process.env.ANTHROPIC_API_KEY;
   console.log("API Key present:", !!apiKey);
   console.log("API Key prefix:", apiKey ? apiKey.substring(0, 15) : "NONE");
- 
+
   if (!apiKey) return { statusCode: 500, headers, body: JSON.stringify({ error: "مفتاح API غير مهيأ على الخادم" }) };
- 
+
   let body;
   try { body = JSON.parse(event.body); }
   catch(e) { return { statusCode: 400, headers, body: JSON.stringify({ error: "طلب غير صالح: " + e.message }) }; }
- 
+
   const { image, mediaType } = body;
   if (!image) return { statusCode: 400, headers, body: JSON.stringify({ error: "الصورة مفقودة" }) };
- 
+
   const imageSizeKB = Math.round(image.length * 0.75 / 1024);
   console.log("Image size KB:", imageSizeKB, "| Type:", mediaType);
- 
+
   if (image.length > 20000000) {
     return { statusCode: 413, headers, body: JSON.stringify({ error: "الصورة كبيرة جداً — استخدم صورة أصغر" }) };
   }
- 
+
   const prompt = `أنت خبير في قراءة شهادات الثانوية العامة العُمانية الصادرة من وزارة التعليم عام 2026.
- 
+
 الشهادة الجديدة تُظهر لكل مادة: اسم المادة، التقدير (A/B/C/D)، والنسبة المئوية مباشرةً.
 لا يوجد فصل أول وفصل ثانٍ منفصلَين — فقط نسبة واحدة لكل مادة.
- 
+
 استخرج من هذه الشهادة:
 ١. اسم الطالب/الطالبة الكامل
 ٢. الجنس (ذكر أو أنثى) إن ظهر
 ٣. النسبة المئوية لكل مادة
- 
+
 جدول مطابقة أسماء المواد:
 التربية الإسلامية / الإسلامية → تربية_اسلامية
 اللغة العربية / العربية → عربي
@@ -64,7 +63,7 @@ exports.handler = async function(event, context) {
 الرياضة المدرسية / التربية البدنية → رياضة
 إدارة الأعمال → ادارة_اعمال
 اللغة الفرنسية → فرنسي
- 
+
 أعد JSON فقط بدون أي نص آخر:
 {
   "name": "الاسم الكامل أو null",
@@ -76,7 +75,7 @@ exports.handler = async function(event, context) {
   "electives": ["كود1", "كود2", "كود3"],
   "confidence": "high أو medium أو low"
 }
- 
+
 مثال على grades:
 "grades": {
   "تربية_اسلامية": 97,
@@ -88,7 +87,7 @@ exports.handler = async function(event, context) {
   "كيمياء": 87,
   "موسيقى": 96
 }`;
- 
+
   const requestBody = JSON.stringify({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 1500,
@@ -100,9 +99,9 @@ exports.handler = async function(event, context) {
       ]
     }]
   });
- 
+
   console.log("Sending to Anthropic, request size KB:", Math.round(requestBody.length / 1024));
- 
+
   return new Promise((resolve) => {
     const options = {
       hostname: 'api.anthropic.com',
@@ -116,7 +115,7 @@ exports.handler = async function(event, context) {
       },
       timeout: 25000
     };
- 
+
     const req = https.request(options, (res) => {
       let data = '';
       res.on('data', chunk => { data += chunk; });
@@ -132,16 +131,16 @@ exports.handler = async function(event, context) {
           const parsed = JSON.parse(data);
           const text = (parsed.content || []).filter(b => b.type === "text").map(b => b.text).join("");
           console.log("AI response preview:", text.substring(0, 200));
- 
+
           const match = text.match(/\{[\s\S]*\}/);
           if (!match) {
             resolve({ statusCode: 422, headers,
               body: JSON.stringify({ error: "لم أتمكن من قراءة الشهادة — تأكد من وضوح الصورة" }) });
             return;
           }
- 
+
           const result = JSON.parse(match[0]);
- 
+
           // Normalize grades — handle both formats
           if (result.grades) {
             Object.keys(result.grades).forEach(k => {
@@ -160,28 +159,27 @@ exports.handler = async function(event, context) {
               }
             });
           }
- 
+
           console.log("Extracted grades:", Object.keys(result.grades || {}).length, "subjects");
           resolve({ statusCode: 200, headers, body: JSON.stringify(result) });
- 
+
         } catch(e) {
           console.error("Parse error:", e.message);
           resolve({ statusCode: 500, headers, body: JSON.stringify({ error: "خطأ في المعالجة: " + e.message }) });
         }
       });
     });
- 
+
     req.on('timeout', () => {
       req.destroy();
       resolve({ statusCode: 504, headers, body: JSON.stringify({ error: "انتهت مهلة الاتصال — حاول مجدداً" }) });
     });
- 
+
     req.on('error', e => {
       resolve({ statusCode: 500, headers, body: JSON.stringify({ error: "خطأ في الشبكة: " + e.message }) });
     });
- 
+
     req.write(requestBody);
     req.end();
   });
 };
- 
